@@ -77,6 +77,7 @@ def ruta_principal():
 @app.post("/hablar")
 async def hablar(req: ChatRequest, request: Request):
     try:
+        print("\n--- INICIANDO TURNO DE IA (/hablar) ---")
         limpiar_audios_viejos()
         historial_texto = "\n".join([f"{m['emisor']}: {m['texto']}" for m in req.mensajes])
         
@@ -123,33 +124,37 @@ async def hablar(req: ChatRequest, request: Request):
         Devuelve SOLO un JSON: {{"respuesta_personaje": "...", "sugerencia_espanol": "...", "objetivo_cumplido": false}}
         """
 
+        print("1. Enviando prompt a Gemini...")
         response = client.models.generate_content(
             model='gemini-2.5-flash',
             contents=prompt,
             config=types.GenerateContentConfig(
-                system_instruction=instrucciones_sistema
+                response_mime_type="application/json" # <--- ESTO GARANTIZA QUE NO FALLE EL FORMATO
             )
         )
         
-        datos = json.loads(response.text.replace("```json", "").replace("```", ""))
+        print("2. Respuesta JSON recibida, procesando...")
+        texto_limpio = response.text.strip().replace("```json", "").replace("```", "")
+        datos = json.loads(texto_limpio)
         
-        texto_ia = datos["respuesta_personaje"]
+        print("3. Generando audio con Edge-TTS...")
+        texto_ia = datos.get("respuesta_personaje", "Sorry, could you repeat that?")
         nombre_mp3 = f"respuesta_{uuid.uuid4().hex}.mp3"
         ruta_mp3 = f"audios/{nombre_mp3}"
         
         communicate = edge_tts.Communicate(texto_ia, "en-US-AriaNeural")
         await communicate.save(ruta_mp3)
         
-        # FIX VITAL: Generamos la URL dinámicamente para que funcione en la nube y en local
-        base_url = str(request.base_url).rstrip("/")
+        # FIX VITAL: Forzamos "https://" por si el proxy de Render devuelve "http://" y Android lo bloquea
+        base_url = str(request.base_url).replace("http://", "https://").rstrip("/")
         datos["audio_url"] = f"{base_url}/{ruta_mp3}"
         
+        print("4. ¡Turno completado con éxito! Enviando al frontend.")
         return datos
 
     except Exception as e:
-        print(f"Error en /hablar: {e}")
+        print(f"!!! ERROR GRAVE EN /hablar: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-
 @app.post("/pista")
 async def pedir_pista(req: PistaRequest):
     try:
