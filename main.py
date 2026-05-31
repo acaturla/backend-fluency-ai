@@ -9,6 +9,8 @@ import os
 import shutil
 import uuid # <--- NUEVO
 import time
+import os
+import google.generativeai as genai
 
 def limpiar_audios_viejos():
     ruta_audios = "audios"
@@ -26,8 +28,7 @@ def limpiar_audios_viejos():
                 print(f"No se pudo eliminar el archivo {archivo}: {e}")
 
 # 1. Configuración de Gemini
-GOOGLE_API_KEY = "AIzaSyBGWZwG0ohh7RYvdwYGAPLftWqtrsLNwNU"
-genai.configure(api_key=GOOGLE_API_KEY)
+genai.configure(api_key=os.environ.get("GOOGLE_API_KEY"))
 
 instrucciones_sistema = """
 Eres el motor de una app para aprender inglés. 
