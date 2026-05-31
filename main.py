@@ -1,16 +1,15 @@
-from fastapi import FastAPI, HTTPException, File, UploadFile, Form
+from fastapi import FastAPI, HTTPException, File, UploadFile, Form, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 import edge_tts
 import json
 import os
 import shutil
-import uuid # <--- NUEVO
+import uuid 
 import time
-import os
-import google.generativeai as genai
 
 def limpiar_audios_viejos():
     ruta_audios = "audios"
@@ -25,10 +24,10 @@ def limpiar_audios_viejos():
                 os.remove(ruta_completa)
                 print(f"🧹 Limpieza automática: Archivo residual eliminado -> {archivo}")
             except Exception as e:
-                print(f"No se pudo eliminar el archivo {archivo}: {e}")
+                pass
 
-# 1. Configuración de Gemini
-genai.configure(api_key=os.environ.get("GOOGLE_API_KEY"))
+# 1. Configuración de Gemini (Librería moderna)
+client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
 
 instrucciones_sistema = """
 Eres el motor de una app para aprender inglés. 
@@ -45,28 +44,19 @@ SIEMPRE debes responder ÚNICAMENTE con un objeto JSON válido con esta estructu
 }
 """
 
-model = genai.GenerativeModel(
-    'gemini-3.5-flash', 
-    system_instruction=instrucciones_sistema
-) 
-
-# 2. Inicializamos la aplicación web
 app = FastAPI(title="Motor IA - English App")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], # Permite que cualquier app se conecte (ideal para desarrollo)
+    allow_origins=["*"], 
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# --- NOVEDAD: CARPETA DE AUDIOS ---
-# Creamos la carpeta física si no existe y la "montamos" en el servidor web
 os.makedirs("audios", exist_ok=True)
 app.mount("/audios", StaticFiles(directory="audios"), name="audios")
 
-# 3. Definimos la estructura de datos
 class MensajeUsuario(BaseModel):
     texto: str
 
@@ -80,23 +70,20 @@ class ChatRequest(BaseModel):
     nivel: str = "Intermedio"
     es_test: bool = False
 
-# 4. Nuestras Rutas
 @app.get("/")
 def ruta_principal():
     return {"mensaje": "El servidor está activo y listo para hablar."}
 
 @app.post("/hablar")
-async def hablar(req: ChatRequest):
+async def hablar(req: ChatRequest, request: Request):
     try:
         limpiar_audios_viejos()
         historial_texto = "\n".join([f"{m['emisor']}: {m['texto']}" for m in req.mensajes])
         
-        # 2. Lógica de cierre: Si es el último turno, somos tajantes con Gemini
         instruccion_cierre = ""
         if req.ultimo_turno:
             instruccion_cierre = "ATENCIÓN: Este es tu ÚLTIMO turno. Debes cerrar la conversación o despedirte de forma natural. PROHIBIDO hacer preguntas al usuario o dejar la conversación abierta."
         
-        # Adaptamos el vocabulario del personaje IA a 5 niveles
         comportamiento_ia = ""
         if req.nivel == "Básico":
             comportamiento_ia = "Usa frases muy cortas, vocabulario A1, habla despacio y haz preguntas muy cerradas (sí/no)."
@@ -136,12 +123,16 @@ async def hablar(req: ChatRequest):
         Devuelve SOLO un JSON: {{"respuesta_personaje": "...", "sugerencia_espanol": "...", "objetivo_cumplido": false}}
         """
 
-        model = genai.GenerativeModel('gemini-2.5-flash')
-        response = model.generate_content(prompt)
+        response = client.models.generate_content(
+            model='gemini-2.5-flash',
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                system_instruction=instrucciones_sistema
+            )
+        )
         
         datos = json.loads(response.text.replace("```json", "").replace("```", ""))
         
-        # Generación de audio con edge_tts
         texto_ia = datos["respuesta_personaje"]
         nombre_mp3 = f"respuesta_{uuid.uuid4().hex}.mp3"
         ruta_mp3 = f"audios/{nombre_mp3}"
@@ -149,17 +140,19 @@ async def hablar(req: ChatRequest):
         communicate = edge_tts.Communicate(texto_ia, "en-US-AriaNeural")
         await communicate.save(ruta_mp3)
         
-        datos["audio_url"] = f"http://127.0.0.1:8000/{ruta_mp3}"
+        # FIX VITAL: Generamos la URL dinámicamente para que funcione en la nube y en local
+        base_url = str(request.base_url).rstrip("/")
+        datos["audio_url"] = f"{base_url}/{ruta_mp3}"
         
         return datos
 
     except Exception as e:
         print(f"Error en /hablar: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
 @app.post("/pista")
 async def pedir_pista(req: PistaRequest):
     try:
-        # Le pedimos a Gemini que actúe como un profesor que nos sopla la respuesta
         prompt = f"""
         El estudiante está en esta situación: '{req.situacion}'.
         Se ha quedado en blanco. Sugiérele 3 frases cortas, naturales y muy útiles en inglés que podría decir ahora mismo.
@@ -169,21 +162,20 @@ async def pedir_pista(req: PistaRequest):
         3. [Frase en inglés] - [Traducción al español]
         """
         
-        # OJO: Asegúrate de usar la variable de tu modelo (genai.GenerativeModel)
-        # Si la llamaste diferente al principio del archivo, usa ese nombre.
-        model = genai.GenerativeModel('gemini-2.5-flash') 
-        response = model.generate_content(prompt)
+        response = client.models.generate_content(
+            model='gemini-2.5-flash',
+            contents=prompt
+        )
         
         return {"pistas": response.text}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))    
 
-import edge_tts # Asegúrate de que esto está importado arriba si no lo estaba
-
 @app.post("/transcribir")
 async def transcribir_y_evaluar(
+    request: Request,
     file: UploadFile = File(...), 
-    nivel: str = Form("Intermedio") # <--- RECIBE EL NIVEL AQUÍ
+    nivel: str = Form("Intermedio") 
 ):
     limpiar_audios_viejos()
     print("\n--- INICIANDO TRANSCRIPCIÓN ---")
@@ -193,10 +185,9 @@ async def transcribir_y_evaluar(
         with open(nombre_unico, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
 
-        archivo_gemini = genai.upload_file(nombre_unico)
-        model = genai.GenerativeModel('gemini-2.5-flash')
+        # Usamos el nuevo método de subida
+        archivo_gemini = client.files.upload(file=nombre_unico)
 
-        # Adaptamos la severidad a 5 niveles
         severidad = ""
         if nivel == "Básico":
             severidad = "El alumno es A1. Sé extremadamente comprensivo. Solo penaliza si la palabra es totalmente incomprensible. Ignora el acento fuerte y prioriza la motivación."
@@ -209,8 +200,7 @@ async def transcribir_y_evaluar(
         elif nivel == "Avanzado":
             severidad = "El alumno es C1/C2. Sé extremadamente purista. Penaliza cualquier mínimo rastro de acento español, entonación o vocabulario simple."
 
-        # PROMPT ACTUALIZADO: Pedimos el texto ideal
-        prompt = """
+        prompt = f"""
         Actúa como un profesor de fonética y gramática inglesa exigente, pero muy directo, breve y constructivo.
         {severidad}
         Escucha atentamente el audio y evalúa OBLIGATORIAMENTE ambos aspectos (texto y voz).
@@ -226,16 +216,18 @@ async def transcribir_y_evaluar(
         4. 'texto_ideal': Escribe la frase exacta, natural y gramaticalmente perfecta que el usuario DEBERÍA haber dicho (en inglés).
 
         Devuelve SOLO un JSON con este formato exacto: 
-        {"transcripcion": "...", "precision": 0, "correccion": "...", "texto_ideal": "..."}
+        {{"transcripcion": "...", "precision": 0, "correccion": "...", "texto_ideal": "..."}}
         """
 
-        respuesta = model.generate_content([prompt, archivo_gemini])
+        response = client.models.generate_content(
+            model='gemini-2.5-flash',
+            contents=[prompt, archivo_gemini]
+        )
         
         os.remove(nombre_unico)
-        archivo_gemini.delete()
+        client.files.delete(name=archivo_gemini.name)
         
-        # Limpieza del JSON
-        texto_limpio = respuesta.text.strip().replace("```json", "").replace("```", "")
+        texto_limpio = response.text.strip().replace("```json", "").replace("```", "")
         inicio_json = texto_limpio.find('{')
         fin_json = texto_limpio.rfind('}') + 1
         if inicio_json != -1 and fin_json != 0:
@@ -243,23 +235,22 @@ async def transcribir_y_evaluar(
             
         resultado = json.loads(texto_limpio)
         
-        # --- NUEVO: GENERAMOS EL AUDIO DE LA CORRECCIÓN ---
         texto_ideal = resultado.get("texto_ideal", resultado.get("transcripcion", ""))
         nombre_audio_corr = f"corr_{uuid.uuid4().hex}.mp3"
         ruta_audio_corr = f"audios/{nombre_audio_corr}"
         
-        # Usamos la misma voz que la IA para pronunciar la frase correcta
         communicate = edge_tts.Communicate(texto_ideal, "en-US-AriaNeural")
         await communicate.save(ruta_audio_corr)
         
-        audio_correccion_url = f"http://127.0.0.1:8000/{ruta_audio_corr}"
+        base_url = str(request.base_url).rstrip("/")
+        audio_correccion_url = f"{base_url}/{ruta_audio_corr}"
         
         print("6. ¡Éxito! Enviando resultado al frontend.")
         return {
             "transcripcion": resultado.get("transcripcion", ""),
             "precision": resultado.get("precision", 0),
             "correccion": resultado.get("correccion", ""),
-            "audio_correccion": audio_correccion_url # Enviamos la URL del audio
+            "audio_correccion": audio_correccion_url 
         }
 
     except Exception as e:
@@ -267,7 +258,6 @@ async def transcribir_y_evaluar(
         if os.path.exists(nombre_unico): os.remove(nombre_unico)
         raise HTTPException(status_code=500, detail=str(e))
 
-# Definimos el modelo de datos para la evaluación final
 class ResumenRequest(BaseModel):
     mensajes: list
     situacion: str
@@ -277,7 +267,6 @@ class ResumenRequest(BaseModel):
 async def evaluar_sesion(req: ResumenRequest):
     try:
         limpiar_audios_viejos()
-        # 1. Calculamos la media real basada en las evaluaciones parciales
         mensajes_usuario = [m for m in req.mensajes if m.get('emisor') == 'yo' and 'evaluacion' in m]
         
         if not mensajes_usuario:
@@ -286,13 +275,10 @@ async def evaluar_sesion(req: ResumenRequest):
         else:
             suma_notas = sum([m['evaluacion'].get('precision', 0) for m in mensajes_usuario])
             nota_media_real = round(suma_notas / len(mensajes_usuario))
-            # Recopilamos qué le corrigió el profesor durante la charla
             resumen_correcciones = "\n".join([f"- Frase: '{m.get('texto')}'. Corrección previa: {m['evaluacion'].get('correccion')}" for m in mensajes_usuario])
 
-        # 2. Preparamos el texto del chat
         historial_texto = "\n".join([f"{m['emisor']}: {m['texto']}" for m in req.mensajes if m['emisor'] != 'sistema'])
 
-        # 3. Le damos a Gemini las instrucciones y los datos reales
         if req.es_test:
             prompt = f"""
             Actúa como un evaluador de Cambridge. Analiza este test de diagnóstico.
@@ -332,10 +318,11 @@ async def evaluar_sesion(req: ResumenRequest):
             }}
             """
         
-        model = genai.GenerativeModel('gemini-2.5-flash')
-        response = model.generate_content(prompt)
+        response = client.models.generate_content(
+            model='gemini-2.5-flash',
+            contents=prompt
+        )
         
-        # Limpieza de seguridad del JSON
         texto_limpio = response.text.strip().replace("```json", "").replace("```", "")
         inicio_json = texto_limpio.find('{')
         fin_json = texto_limpio.rfind('}') + 1
