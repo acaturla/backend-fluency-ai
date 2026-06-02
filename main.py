@@ -103,20 +103,25 @@ async def hablar(req: ChatRequest, request: Request):
 
         if req.es_test:
             comportamiento_ia = """
-            ATENCIÓN: Eres un examinador oficial de Cambridge. 
-            El usuario acaba de iniciar la interacción (probablemente saludando o diciendo que está listo). 
-            REGLA DE ORO: IGNORA SU SALUDO Y LOS FORMALISMOS. No le preguntes si está preparado. Tu respuesta DEBE ser directamente la primera pregunta evaluativa.
+            ATENCIÓN: Eres un evaluador de nivel de inglés adaptativo.
+            TU OBJETIVO ES DETERMINAR EL NIVEL DEL USUARIO (de Básico a Avanzado).
             
-            - Si es el primer turno, lanza una pregunta básica (ej. "Where do you live and what do you like about it?"). 
-            - En los siguientes turnos, AUMENTA drásticamente la complejidad de tus preguntas (ej. debates sobre tecnología, situaciones hipotéticas complejas, opiniones abstractas). 
+            REGLA DE PROGRESIÓN:
+            1. COMIENZA SIEMPRE CON NIVEL BÁSICO (A1). Haz preguntas muy simples sobre la rutina diaria o gustos personales (ej. "What is your favorite food?").
+            2. SI EL USUARIO RESPONDE CON FLUIDEZ Y GRAMÁTICA CORRECTA: En el siguiente turno, aumenta ligeramente la complejidad.
+            3. SI EL USUARIO TIENE DIFICULTADES: Mantén la complejidad o bájala.
+            
+            - REGLA DE ORO: TÚ INICIAS. No preguntes si está listo.
             - Haz UNA SOLA pregunta por turno.
-            NO corrijas sus errores, solo escucha y lanza la siguiente pregunta del examen.
+            - NO corrijas al usuario, solo evalúa su respuesta para decidir la siguiente pregunta.
+            - Continúa así hasta completar unos 5-8 turnos. Solo entonces, despídete y prepara el reporte.
             """
+            
             es_realmente_ultimo = req.ultimo_turno if not req.es_test else False
         
             instruccion_cierre = ""
             if es_realmente_ultimo:
-                instruccion_cierre = "ATENCIÓN: Este es el último turno del test. Despídete de forma muy breve y dile que vas a calcular su nivel. NO hagas más preguntas."
+                instruccion_cierre = "ATENCIÓN: Ya has reunido suficiente información para evaluar. Despídete brevemente y dile que vas a calcular su nivel. NO hagas más preguntas."
         
         prompt = f"""
         Eres un personaje en la siguiente situación: "{req.situacion}".
