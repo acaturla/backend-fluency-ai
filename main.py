@@ -112,7 +112,11 @@ async def hablar(req: ChatRequest, request: Request):
             - Haz UNA SOLA pregunta por turno.
             NO corrijas sus errores, solo escucha y lanza la siguiente pregunta del examen.
             """
-            instruccion_cierre = "ATENCIÓN: Este es el último turno del test. Despídete de forma muy breve y dile que vas a calcular su nivel. NO hagas más preguntas."
+            es_realmente_ultimo = req.ultimo_turno if not req.es_test else False
+        
+            instruccion_cierre = ""
+            if es_realmente_ultimo:
+                instruccion_cierre = "ATENCIÓN: Este es el último turno del test. Despídete de forma muy breve y dile que vas a calcular su nivel. NO hagas más preguntas."
         
         prompt = f"""
         Eres un personaje en la siguiente situación: "{req.situacion}".
