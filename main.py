@@ -66,19 +66,18 @@ def obtener_voz(acento: str, situacion: str) -> str:
         "Neutro": {"M": "en-CA-LiamNeural", "F": "en-AU-NatashaNeural"}
     }
     
-    situaciones_masculinas = [
-        "Control de pasaportes", 
-        "Control de seguridad del aeropuerto", 
-        "Perdido en la calle"
-    ]
-    
-    genero = "M" if situacion in situaciones_masculinas else "F"
-    
+    # Buscamos palabras clave en minúsculas
+    sit_lower = situacion.lower()
+    if "pasaporte" in sit_lower or "seguridad" in sit_lower or "perdido" in sit_lower:
+        genero = "M"
+    else:
+        genero = "F"
+        
     if acento not in voces:
         acento = "USA"
         
     return voces[acento][genero]
-
+    
 @app.post("/hablar")
 async def hablar(req: ChatRequest, request: Request):
     try:
@@ -187,7 +186,8 @@ async def transcribir_y_evaluar(
     request: Request,
     file: UploadFile = File(...), 
     nivel: str = Form("Intermedio"),
-    acento: str = Form("UK") # <--- ERRATAS CORREGIDAS
+    acento: str = Form("UK"),
+    situacion: str = Form("General")
 ):
     limpiar_audios_viejos()
     print("\n--- INICIANDO TRANSCRIPCIÓN ---")
@@ -250,7 +250,7 @@ async def transcribir_y_evaluar(
         nombre_audio_corr = f"corr_{uuid.uuid4().hex}.mp3"
         ruta_audio_corr = f"audios/{nombre_audio_corr}"
         
-        voz_elegida = obtener_voz(acento, "Correccion")
+        voz_elegida = obtener_voz(acento, situacion)
         communicate = edge_tts.Communicate(texto_ideal, voz_elegida)
         await communicate.save(ruta_audio_corr)
         
